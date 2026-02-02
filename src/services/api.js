@@ -1,4 +1,5 @@
 import { supabase } from '../config/supabase';
+import { SecurityService } from './security';
 
 class ApiService {
   // Auth methods
@@ -28,9 +29,37 @@ class ApiService {
 
   // File methods
   async uploadFile(bucket, path, file) {
+    // 1. Security Check
+    const validation = SecurityService.validateFile(file);
+    if (!validation.valid) {
+      await SecurityService.logEvent('SUSPICIOUS_UPLOAD_ATTEMPT', {
+        fileName: file.name,
+        reason: validation.error
+      }, 'danger');
+      return { data: null, error: { message: validation.error } };
+    }
+
+    // 2. Upload to Storage
     const { data, error } = await supabase.storage
       .from(bucket)
       .upload(path, file);
+
+    if (error) {
+      await SecurityService.logEvent('UPLOAD_FAILED', { path, error: error.message }, 'warning');
+      return { data, error };
+    }
+
+    // 3. Create Metadata Record
+    const { data: { user } } = await supabase.auth.getUser();
+    await supabase.from('files').insert({
+      name: file.name,
+      size: file.size,
+      type: file.type || 'application/octet-stream',
+      storage_path: path,
+      owner_id: user.id
+    });
+
+    await SecurityService.logEvent('FILE_UPLOADED', { fileName: file.name, path }, 'info');
     return { data, error };
   }
 
@@ -51,12 +80,18 @@ class ApiService {
   // Database methods
   async getData(table, filters = {}) {
     let query = supabase.from(table).select('*');
-    
+
     Object.entries(filters).forEach(([key, value]) => {
       query = query.eq(key, value);
     });
 
     const { data, error } = await query;
+
+    if (error && (error.code === '42501' || error.status === 403)) {
+      // Log RLS violations or Forbidden errors
+      SecurityService.logEvent('UNAUTHORIZED_ACCESS_ATTEMPT', { table, error: error.message }, 'danger');
+    }
+
     return { data, error };
   }
 

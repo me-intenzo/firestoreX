@@ -21,28 +21,6 @@ export function AuthProvider({ children }) {
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       setUser(session?.user ?? null);
-      
-      // Handle user registration - create profile if needed
-      if (event === 'SIGNED_UP' && session?.user) {
-        const { user } = session;
-        const username = user.user_metadata?.username;
-        
-        if (username) {
-          // Create or update user profile in a profiles table if you have one
-          const { error } = await supabase
-            .from('profiles')
-            .upsert({
-              id: user.id,
-              username: username,
-              email: user.email,
-              updated_at: new Date().toISOString()
-            });
-          
-          if (error) {
-            console.error('Error creating profile:', error);
-          }
-        }
-      }
     });
 
     return () => subscription.unsubscribe();

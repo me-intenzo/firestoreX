@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Toaster } from 'sonner';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { Dashboard, LandingPage, Login, Register } from './components/features';
 import { LoadingSpinner } from './components/ui';
@@ -18,12 +19,12 @@ function AuthWrapper() {
 
   switch (currentView) {
     case 'login':
-      return <Login onToggle={() => setCurrentView('register')} />;
+      return <Login onToggle={() => setCurrentView('register')} onBack={() => setCurrentView('landing')} />;
     case 'register':
-      return <Register onToggle={() => setCurrentView('login')} />;
+      return <Register onToggle={() => setCurrentView('login')} onBack={() => setCurrentView('landing')} />;
     default:
       return (
-        <LandingPage 
+        <LandingPage
           onGetStarted={() => setCurrentView('register')}
           onLogin={() => setCurrentView('login')}
         />
@@ -35,6 +36,7 @@ export default function App() {
   return (
     <AuthProvider>
       <AuthWrapper />
+      <Toaster position="top-center" richColors theme="dark" />
     </AuthProvider>
   );
 }
