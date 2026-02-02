@@ -44,15 +44,15 @@ firestore/
 
 ### Landing Page
 > A modern, interactive landing page with parallax effects.
-![Landing Page](.\public\assets\landingpage.png)
+![Landing Page](public/assets/landingpage.png)
 
 ### User Registration
 > Secure registration flow with robust validation.
-![Registration](.\public\assets\signin.png)
+![Registration](public/assets/signin.png)
 
 ### Dashboard
 > The main workspace interface.
-![Dashboard](.\public\assets\dashboard.png)
+![Dashboard](public/assets/dashboard.png)
 
 ## Installation & Setup
 
