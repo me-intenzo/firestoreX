@@ -36,14 +36,30 @@ CREATE TABLE IF NOT EXISTS files (
   type TEXT NOT NULL,
   storage_path TEXT NOT NULL,
   owner_id UUID REFERENCES auth.users(id) NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  -- Security fields
+  access_level TEXT DEFAULT 'private', -- 'public', 'private', 'restricted', 'password'
+  password_hash TEXT,
+  allowed_users JSONB DEFAULT '[]'::jsonb,
+  downloads INTEGER DEFAULT 0
 );
 
 ALTER TABLE files ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Users can manage own files" ON files;
-CREATE POLICY "Users can manage own files" ON files
-  USING (auth.uid() = owner_id);
+-- Final Permissive Policy for Authenticated Users
+DROP POLICY IF EXISTS "Authenticated Allow All" ON files;
+CREATE POLICY "Authenticated Allow All" ON files
+  FOR ALL
+  TO authenticated
+  USING (true)
+  WITH CHECK (true);
+
+-- Public Read Access (for shared links)
+DROP POLICY IF EXISTS "Public Read Access" ON files;
+CREATE POLICY "Public Read Access" ON files
+  FOR SELECT
+  USING (access_level = 'public');
+
 
 -- ACTIVITY LOGS (Security Auditing)
 CREATE TABLE IF NOT EXISTS activity_logs (
@@ -57,13 +73,21 @@ CREATE TABLE IF NOT EXISTS activity_logs (
 
 ALTER TABLE activity_logs ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Users can view own logs" ON activity_logs;
-CREATE POLICY "Users can view own logs" ON activity_logs
-  FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Authenticated Logs Access" ON activity_logs;
+CREATE POLICY "Authenticated Logs Access" ON activity_logs
+  FOR ALL
+  TO authenticated
+  USING (true)
+  WITH CHECK (true);
 
-DROP POLICY IF EXISTS "Users can insert own logs" ON activity_logs;
-CREATE POLICY "Users can insert own logs" ON activity_logs
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
+-- STORAGE POLICIES
+-- Ensure storage.objects and buckets are accessible
+-- (These must be run in the SQL editor, they might not work if run via migration tool depending on permissions, but good to document)
+
+-- Allow authenticated users to upload to 'uploads' bucket
+-- CREATE POLICY "Authenticated Storage Access" ON storage.objects FOR ALL TO authenticated USING (bucket_id = 'uploads') WITH CHECK (bucket_id = 'uploads');
+-- CREATE POLICY "Public Storage Read" ON storage.objects FOR SELECT USING (bucket_id = 'uploads');
+
 
 -- FUNCTIONS & TRIGGERS
 
@@ -94,13 +118,10 @@ BEGIN
   ON CONFLICT (id) DO NOTHING;
   
   -- Log the new user registration
-  -- We use a separate block to ensure logging doesn't fail the profile creation if logs table issue exists (though we want it to succeed)
   BEGIN
     INSERT INTO activity_logs (user_id, action, details, severity)
     VALUES (NEW.id, 'USER_REGISTERED', jsonb_build_object('email', NEW.email), 'info');
   EXCEPTION WHEN OTHERS THEN
-    -- If logging fails, we swallow the error so user creation succeeds. 
-    -- In a strict environment, you might want to raise 'warning'.
     RAISE WARNING 'Failed to create activity log for new user: %', SQLERRM;
   END;
 

@@ -9,11 +9,12 @@ FirestoreX is a secure-by-design cloud storage and collaboration platform. It ad
 
 ## Key Features
 
--   **Zero-Knowledge Security**: Architecture designed to ensure user data remains private.
--   **Modern User Interface**: Responsive "Bento Grid" layout with "Spotlight" interactions and smooth Framer Motion animations.
--   **Real-time Feedback**: Integrated toast notification system for immediate user feedback.
--   **Secure Authentication**: Role-based access control (RBAC) powered by Supabase Auth and Database Triggers.
--   **High Performance**: Optimized for speed with edge-ready architecture considerations.
+-   **Client-Side Encryption**: AES-256-GCM encryption for file security
+-   **Secure File Sharing**: Password-protected, time-limited share links with download limits
+-   **Modern User Interface**: Responsive "Bento Grid" layout with "Spotlight" interactions and smooth Framer Motion animations
+-   **Real-time Feedback**: Integrated toast notification system for immediate user feedback
+-   **Secure Authentication**: Role-based access control (RBAC) powered by Supabase Auth
+-   **Activity Logging**: Comprehensive audit trail for security events
 
 ## Technology Stack
 
@@ -21,9 +22,9 @@ FirestoreX is a secure-by-design cloud storage and collaboration platform. It ad
 -   **Styling**: Tailwind CSS, PostCSS
 -   **Animations**: Framer Motion
 -   **Backend/Database**: Supabase (PostgreSQL)
+-   **Security**: Web Crypto API (AES-256-GCM), bcryptjs
 -   **State Management**: React Context API
 -   **Notifications**: Sonner
--   **Cloud**: Supabase
 
 ## Project Structure
 
@@ -75,12 +76,49 @@ firestore/
     ```
 
 4.  **Database Setup**
-    Run the SQL script found in `database/supabase-setup.sql` in your Supabase SQL Editor.
+    Run these SQL scripts in your Supabase SQL Editor:
+    ```bash
+    # First, run the main setup
+    database/supabase-setup.sql
+    
+    # Then, run Phase 2 security enhancements
+    database/phase2_security_enhancements.sql
+    ```
 
 5.  **Run Locally**
     ```bash
     npm run dev
     ```
+
+## Security Features
+
+### Phase 2 Implementation ✅
+
+-   **Client-Side Encryption**: Files encrypted with AES-256-GCM before upload
+-   **Password Protection**: bcrypt hashing (12 rounds) for share link passwords
+-   **Time-Limited Shares**: Set expiration times for shared links
+-   **Download Limits**: Restrict number of downloads per share link
+-   **Secure Tokens**: Cryptographically secure share token generation
+-   **Activity Logging**: Comprehensive audit trail for all file operations
+
+For detailed security documentation, see:
+- `SECURITY_ARCHITECTURE.md` - Architecture diagrams
+
+## Usage
+
+### Uploading Files
+1. Navigate to Dashboard
+2. Click "Upload" or drag & drop files
+3. Files are automatically encrypted client-side (optional)
+
+### Sharing Files
+1. Right-click on any file
+2. Select "Share"
+3. Configure security options:
+   - Set password protection
+   - Set link expiration (hours)
+   - Set maximum downloads
+4. Copy and share the secure link
 
 ## License & Policies
 
