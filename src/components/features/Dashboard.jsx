@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  LayoutGrid, List, File, Image, Music, Video, Search, Bell, Upload, X, Settings, Shield,
+  LayoutGrid, List, File, Image, Music, Video, Search, Bell, Upload, Settings, Shield,
   ChevronsRight, Folder, LogOut, ChevronRight, MoreVertical, Share2, Trash2, Download,
-  FileText, FolderPlus, Activity, Clock, Database, Star, Menu, HardDrive, TrendingUp, Users
+  FileText, FolderPlus, Activity, Clock, Database, Star, Menu, HardDrive, TrendingUp
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import ApiService from '../../services/api';
@@ -15,7 +15,6 @@ import { toast } from 'sonner';
 export default function Dashboard() {
   const { user, signOut } = useAuth();
   const [viewMode, setViewMode] = useState('grid');
-  const [selectedFile, setSelectedFile] = useState(null);
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [navCollapsed, setNavCollapsed] = useState(false);
@@ -26,7 +25,19 @@ export default function Dashboard() {
   const [activityModalData, setActivityModalData] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeView, setActiveView] = useState('files');
+  const [starredIds, setStarredIds] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('starredFiles') || '[]'); } catch { return []; }
+  });
 
+  const toggleStar = (fileId, e) => {
+    e?.stopPropagation();
+    if (!fileId) return;
+    const newStarred = starredIds.includes(fileId)
+      ? starredIds.filter(id => id !== fileId)
+      : [...starredIds, fileId];
+    setStarredIds(newStarred);
+    localStorage.setItem('starredFiles', JSON.stringify(newStarred));
+  };
   const fetchFiles = useCallback(async () => {
     try {
       const { data } = await ApiService.getData('files', { owner_id: user.id });
@@ -42,7 +53,7 @@ export default function Dashboard() {
     fetchFiles();
   }, [fetchFiles]);
 
-  const { currentFolderFiles, folders, totalSize, storageStats } = useMemo(() => {
+  const { currentFolderFiles, folders, totalSize } = useMemo(() => {
     const normalizedPath = currentPath ? (currentPath.endsWith('/') ? currentPath : `${currentPath}/`) : '';
     let size = 0;
     const typeStats = { images: 0, videos: 0, documents: 0, others: 0 };
@@ -84,10 +95,57 @@ export default function Dashboard() {
     return [...files].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
   }, [files]);
 
+  const activityFiles = useMemo(() => {
+    return [...files].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 20);
+  }, [files]);
+
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+
+  const visibleFolders = useMemo(() => {
+    if (activeView !== 'files') return [];
+    if (!normalizedSearch) return folders;
+    return folders.filter((folder) => folder.name.toLowerCase().includes(normalizedSearch));
+  }, [folders, activeView, normalizedSearch]);
+
+  const visibleFiles = useMemo(() => {
+    const baseFiles = activeView === 'recent'
+      ? recentFiles
+      : activeView === 'starred'
+        ? files.filter((f) => starredIds.includes(f.id))
+        : currentFolderFiles;
+
+    if (!normalizedSearch) return baseFiles;
+    return baseFiles.filter((f) => (f.name || '').toLowerCase().includes(normalizedSearch));
+  }, [activeView, recentFiles, files, starredIds, currentFolderFiles, normalizedSearch]);
+
   const handleUpload = async (e) => {
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
-    processFiles(fileList);
+
+    const MAX_SIZE_MB = 15;
+    const MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024;
+
+    const validFiles = [];
+    const invalidFiles = [];
+
+    Array.from(fileList).forEach(file => {
+      if (file.size > MAX_SIZE_BYTES) {
+        invalidFiles.push(file);
+      } else {
+        validFiles.push(file);
+      }
+    });
+
+    if (invalidFiles.length > 0) {
+      toast.error(`Upload failed: ${invalidFiles.length} file(s) exceed the ${MAX_SIZE_MB}MB limit.`);
+    }
+
+    if (validFiles.length > 0) {
+      processFiles(validFiles);
+    }
+
+    // Reset the input value so the same file can be selected again if needed
+    e.target.value = '';
   };
 
   const processFiles = async (fileList) => {
@@ -138,6 +196,15 @@ export default function Dashboard() {
     }
   };
 
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      toast.success('Signed out');
+    } catch (error) {
+      toast.error(error?.message || 'Sign out failed');
+    }
+  };
+
   const breadcrumbs = useMemo(() => {
     if (!currentPath) return [];
     const parts = currentPath.split('/').filter(Boolean);
@@ -161,12 +228,15 @@ export default function Dashboard() {
     {
       label: 'Open', icon: <FileText size={16} />, onClick: () => {
         if (contextMenu?.item?.type === 'folder') setCurrentPath(currentPath ? `${currentPath}/${contextMenu.item.name}` : contextMenu.item.name);
-        else setSelectedFile(contextMenu?.item);
+        else setActivityModalData(contextMenu?.item);
       }
     },
-    { label: 'Download', icon: <Download size={16} />, onClick: () => handleDownload(contextMenu?.item) },
-    { label: 'Share', icon: <Share2 size={16} />, onClick: () => setShareModalData(contextMenu?.item) },
-    { label: 'Activity', icon: <Activity size={16} />, onClick: () => setActivityModalData(contextMenu?.item) },
+    ...(contextMenu?.item?.type !== 'folder' ? [
+      { label: 'Download', icon: <Download size={16} />, onClick: () => handleDownload(contextMenu?.item) },
+      { label: 'Share', icon: <Share2 size={16} />, onClick: () => setShareModalData(contextMenu?.item) },
+      { label: starredIds.includes(contextMenu?.item?.id) ? 'Unstar' : 'Star', icon: <Star size={16} className={starredIds.includes(contextMenu?.item?.id) ? 'fill-yellow-400 text-yellow-400' : ''} />, onClick: () => toggleStar(contextMenu?.item?.id) },
+      { label: 'Activity', icon: <Activity size={16} />, onClick: () => setActivityModalData(contextMenu?.item) },
+    ] : []),
     {
       label: 'Delete', variant: 'danger', icon: <Trash2 size={16} />, onClick: () => {
         if (confirm(`Delete ${contextMenu?.item?.name}?`)) toast.success('Deleted (Mock)');
@@ -193,12 +263,13 @@ export default function Dashboard() {
 
   return (
     <div
-      className="flex h-screen bg-[#05050A] text-slate-300 overflow-hidden font-sans selection:bg-indigo-500/30"
+      className="flex h-screen bg-[#030712] text-slate-200 overflow-hidden font-sans selection:bg-sky-500/30"
       onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
     >
-      <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 via-transparent to-purple-500/5 pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-br from-sky-500/10 via-transparent to-indigo-500/10 pointer-events-none" />
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute inset-0 pointer-events-none opacity-20 bg-[linear-gradient(rgba(255,255,255,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.05)_1px,transparent_1px)] bg-[size:48px_48px]" />
 
       <AnimatePresence>
         {isDragging && (
@@ -216,20 +287,19 @@ export default function Dashboard() {
         )}
       </AnimatePresence>
 
-      <motion.aside animate={{ width: navCollapsed ? 80 : 260 }} className="h-full bg-[#0B0C15]/50 backdrop-blur-xl border-r border-white/5 flex flex-col z-20 relative">
+      <motion.aside animate={{ width: navCollapsed ? 80 : 260 }} className="h-full bg-[#071025]/70 backdrop-blur-xl border-r border-white/5 flex flex-col z-20 relative">
         <div className="h-20 flex items-center px-6 border-b border-white/5">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center shrink-0 shadow-lg shadow-indigo-500/20">
-            <Shield size={20} className="text-white" />
-          </div>
+          <img src="/assets/firestorex-logo.svg" alt="FirestoreX logo" className="w-10 h-10 rounded-xl shrink-0" />
           {!navCollapsed && <span className="ml-4 font-bold text-xl text-white tracking-tight">FirestoreX</span>}
         </div>
 
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
           <p className={`px-4 text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 mt-4 ${navCollapsed ? 'hidden' : 'block'}`}>Menu</p>
-          <NavItem icon={<LayoutGrid size={20} />} label="Overview" active={activeView === 'files'} onClick={() => { setActiveView('files'); setCurrentPath(''); }} collapsed={navCollapsed} />
-          <NavItem icon={<Folder size={20} />} label="My Files" collapsed={navCollapsed} onClick={() => { setActiveView('files'); setCurrentPath(''); }} />
-          <NavItem icon={<Clock size={20} />} label="Recent" collapsed={navCollapsed} onClick={() => toast.info('Recent Files - Coming Soon')} />
-          <NavItem icon={<Star size={20} />} label="Starred" collapsed={navCollapsed} onClick={() => toast.info('Starred Files - Coming Soon')} />
+          <NavItem icon={<LayoutGrid size={20} />} label="Overview" active={activeView === 'overview'} onClick={() => { setActiveView('overview'); setCurrentPath(''); }} collapsed={navCollapsed} />
+          <NavItem icon={<Folder size={20} />} label="My Files" active={activeView === 'files'} collapsed={navCollapsed} onClick={() => { setActiveView('files'); setCurrentPath(''); }} />
+          <NavItem icon={<Clock size={20} />} label="Recent" active={activeView === 'recent'} collapsed={navCollapsed} onClick={() => { setActiveView('recent'); setCurrentPath(''); }} />
+          <NavItem icon={<Star size={20} />} label="Starred" active={activeView === 'starred'} collapsed={navCollapsed} onClick={() => { setActiveView('starred'); setCurrentPath(''); }} />
+          <NavItem icon={<Activity size={20} />} label="Activity" active={activeView === 'activity'} collapsed={navCollapsed} onClick={() => { setActiveView('activity'); setCurrentPath(''); }} />
 
           <div className="h-px bg-white/5 my-4 mx-2" />
 
@@ -255,17 +325,15 @@ export default function Dashboard() {
                 <p className="text-xs text-slate-500 truncate">{user?.email}</p>
               </div>
             )}
-            {!navCollapsed && (
-              <button onClick={signOut} className="p-2 hover:bg-white/5 rounded-lg transition-colors">
-                <LogOut size={16} className="text-slate-400" />
-              </button>
-            )}
+            <button onClick={handleSignOut} className="p-2 hover:bg-white/5 rounded-lg transition-colors" title="Sign out">
+              <LogOut size={16} className="text-slate-400" />
+            </button>
           </div>
         </div>
       </motion.aside>
 
       <main className="flex-1 flex flex-col min-w-0 z-10 relative">
-        <header className="h-20 border-b border-white/5 bg-[#0B0C15]/30 backdrop-blur-xl flex items-center justify-between px-8">
+        <header className="h-20 border-b border-white/5 bg-[#071025]/70 backdrop-blur-xl flex items-center justify-between px-8">
           <div className="flex items-center gap-4 flex-1">
             <button className="lg:hidden p-2 hover:bg-white/5 rounded-lg">
               <Menu size={20} />
@@ -313,152 +381,173 @@ export default function Dashboard() {
             <SettingsView user={user} />
           ) : activeView === 'trust' ? (
             <TrustCenterView />
+          ) : activeView === 'activity' ? (
+            <ActivityFeedView files={activityFiles} onOpenActivity={(file) => setActivityModalData(file)} />
           ) : (
             <>
-          {!currentPath && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-gradient-to-br from-indigo-600/20 to-purple-600/20 border border-indigo-500/30 rounded-2xl p-6"
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div className="w-12 h-12 rounded-xl bg-indigo-600/30 flex items-center justify-center">
-                    <HardDrive size={24} className="text-indigo-400" />
-                  </div>
-                  <span className="text-xs text-slate-400">Storage</span>
-                </div>
-                <h3 className="text-2xl font-bold text-white mb-1">{formatBytes(totalSize)}</h3>
-                <p className="text-sm text-slate-400 mb-3">of 5 GB used</p>
-                <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+              {activeView === 'overview' && !currentPath && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
                   <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${storagePercent}%` }}
-                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-500"
-                  />
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="bg-gradient-to-br from-indigo-600/20 to-purple-600/20 border border-indigo-500/30 rounded-2xl p-6"
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="w-12 h-12 rounded-xl bg-indigo-600/30 flex items-center justify-center">
+                        <HardDrive size={24} className="text-indigo-400" />
+                      </div>
+                      <span className="text-xs text-slate-400">Storage</span>
+                    </div>
+                    <h3 className="text-2xl font-bold text-white mb-1">{formatBytes(totalSize)}</h3>
+                    <p className="text-sm text-slate-400 mb-3">of 5 GB used</p>
+                    <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${storagePercent}%` }}
+                        className="h-full bg-gradient-to-r from-indigo-500 to-purple-500"
+                      />
+                    </div>
+                  </motion.div>
+
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.1 }}
+                    className="bg-white/5 border border-white/10 rounded-2xl p-6"
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="w-12 h-12 rounded-xl bg-emerald-600/30 flex items-center justify-center">
+                        <FileText size={24} className="text-emerald-400" />
+                      </div>
+                      <span className="text-xs text-slate-400">Total Files</span>
+                    </div>
+                    <h3 className="text-2xl font-bold text-white mb-1">{files.length}</h3>
+                    <p className="text-sm text-slate-400">Files stored</p>
+                  </motion.div>
+
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2 }}
+                    className="bg-white/5 border border-white/10 rounded-2xl p-6"
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="w-12 h-12 rounded-xl bg-purple-600/30 flex items-center justify-center">
+                        <TrendingUp size={24} className="text-purple-400" />
+                      </div>
+                      <span className="text-xs text-slate-400">Activity</span>
+                    </div>
+                    <h3 className="text-2xl font-bold text-white mb-1">{recentFiles.length}</h3>
+                    <p className="text-sm text-slate-400">Recent uploads</p>
+                  </motion.div>
                 </div>
-              </motion.div>
+              )}
 
               <motion.div
-                initial={{ opacity: 0, y: 20 }}
+                initial={{ opacity: 0, y: 16 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1 }}
-                className="bg-white/5 border border-white/10 rounded-2xl p-6"
+                className="relative overflow-hidden rounded-3xl border border-sky-400/20 bg-gradient-to-r from-sky-500/15 via-indigo-500/10 to-purple-500/10 p-6 mb-6"
               >
-                <div className="flex items-center justify-between mb-4">
-                  <div className="w-12 h-12 rounded-xl bg-emerald-600/30 flex items-center justify-center">
-                    <FileText size={24} className="text-emerald-400" />
-                  </div>
-                  <span className="text-xs text-slate-400">Total Files</span>
-                </div>
-                <h3 className="text-2xl font-bold text-white mb-1">{files.length}</h3>
-                <p className="text-sm text-slate-400">Files stored</p>
+                <div className="absolute -right-16 -top-16 h-40 w-40 rounded-full bg-sky-400/20 blur-3xl" />
+                <div className="absolute -left-10 -bottom-10 h-36 w-36 rounded-full bg-indigo-500/20 blur-3xl" />
+                <p className="text-xs font-semibold tracking-widest uppercase text-sky-300/80 mb-2">Workspace Pulse</p>
+                <h2 className="text-2xl font-bold text-white mb-1">{activeView === 'recent' ? 'Recent Flow' : activeView === 'starred' ? 'Starred Collection' : 'My Workspace'}</h2>
+                <p className="text-sm text-slate-300 max-w-2xl">Search, organize, and monitor your files from one place.</p>
               </motion.div>
 
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-                className="bg-white/5 border border-white/10 rounded-2xl p-6"
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div className="w-12 h-12 rounded-xl bg-purple-600/30 flex items-center justify-center">
-                    <TrendingUp size={24} className="text-purple-400" />
-                  </div>
-                  <span className="text-xs text-slate-400">Activity</span>
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold text-white">
+                  {activeView === 'recent' ? 'Recent Files' : activeView === 'starred' ? 'Starred Files' : (currentPath || 'My Files')}
+                </h2>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setViewMode('grid')} className={`p-2 rounded-lg ${viewMode === 'grid' ? 'bg-indigo-600' : 'bg-white/5 hover:bg-white/10'}`}>
+                    <LayoutGrid size={18} />
+                  </button>
+                  <button onClick={() => setViewMode('list')} className={`p-2 rounded-lg ${viewMode === 'list' ? 'bg-indigo-600' : 'bg-white/5 hover:bg-white/10'}`}>
+                    <List size={18} />
+                  </button>
+                  <button onClick={handleCreateFolder} className="ml-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm flex items-center gap-2">
+                    <FolderPlus size={18} />
+                    New Folder
+                  </button>
                 </div>
-                <h3 className="text-2xl font-bold text-white mb-1">{recentFiles.length}</h3>
-                <p className="text-sm text-slate-400">Recent uploads</p>
-              </motion.div>
-            </div>
-          )}
+              </div>
 
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-bold text-white">{currentPath || 'All Files'}</h2>
-            <div className="flex items-center gap-2">
-              <button onClick={() => setViewMode('grid')} className={`p-2 rounded-lg ${viewMode === 'grid' ? 'bg-indigo-600' : 'bg-white/5 hover:bg-white/10'}`}>
-                <LayoutGrid size={18} />
-              </button>
-              <button onClick={() => setViewMode('list')} className={`p-2 rounded-lg ${viewMode === 'list' ? 'bg-indigo-600' : 'bg-white/5 hover:bg-white/10'}`}>
-                <List size={18} />
-              </button>
-              <button onClick={handleCreateFolder} className="ml-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm flex items-center gap-2">
-                <FolderPlus size={18} />
-                New Folder
-              </button>
-            </div>
-          </div>
+              {loading ? (
+                <div className="flex items-center justify-center h-64">
+                  <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                </div>
+              ) : (
+                <div className={viewMode === 'grid' ? 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4' : 'space-y-2'}>
+                  {(activeView === 'files' ? visibleFolders : []).map((folder, i) => (
+                    <motion.div
+                      key={i}
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: i * 0.05 }}
+                      onContextMenu={(e) => handleContextMenu(e, folder)}
+                      onClick={() => setCurrentPath(currentPath ? `${currentPath}/${folder.name}` : folder.name)}
+                      className={viewMode === 'grid'
+                        ? 'bg-white/5 border border-white/10 rounded-xl p-4 hover:bg-white/10 cursor-pointer transition-all group'
+                        : 'bg-white/5 border border-white/10 rounded-xl p-4 hover:bg-white/10 cursor-pointer transition-all flex items-center gap-4'
+                      }
+                    >
+                      <div className={viewMode === 'grid' ? 'w-full aspect-square bg-gradient-to-br from-indigo-600/20 to-purple-600/20 rounded-lg flex items-center justify-center mb-3' : 'w-12 h-12 bg-gradient-to-br from-indigo-600/20 to-purple-600/20 rounded-lg flex items-center justify-center shrink-0'}>
+                        <Folder size={viewMode === 'grid' ? 32 : 24} className="text-indigo-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-white truncate">{folder.name}</p>
+                        {viewMode === 'list' && <p className="text-xs text-slate-500">Folder</p>}
+                      </div>
+                    </motion.div>
+                  ))}
 
-          {loading ? (
-            <div className="flex items-center justify-center h-64">
-              <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-            </div>
-          ) : (
-            <div className={viewMode === 'grid' ? 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4' : 'space-y-2'}>
-              {folders.map((folder, i) => (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: i * 0.05 }}
-                  onContextMenu={(e) => handleContextMenu(e, folder)}
-                  onClick={() => setCurrentPath(currentPath ? `${currentPath}/${folder.name}` : folder.name)}
-                  className={viewMode === 'grid' 
-                    ? 'bg-white/5 border border-white/10 rounded-xl p-4 hover:bg-white/10 cursor-pointer transition-all group'
-                    : 'bg-white/5 border border-white/10 rounded-xl p-4 hover:bg-white/10 cursor-pointer transition-all flex items-center gap-4'
-                  }
-                >
-                  <div className={viewMode === 'grid' ? 'w-full aspect-square bg-gradient-to-br from-indigo-600/20 to-purple-600/20 rounded-lg flex items-center justify-center mb-3' : 'w-12 h-12 bg-gradient-to-br from-indigo-600/20 to-purple-600/20 rounded-lg flex items-center justify-center shrink-0'}>
-                    <Folder size={viewMode === 'grid' ? 32 : 24} className="text-indigo-400" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-white truncate">{folder.name}</p>
-                    {viewMode === 'list' && <p className="text-xs text-slate-500">Folder</p>}
-                  </div>
-                </motion.div>
-              ))}
+                  {visibleFiles.map((file, i) => (
+                    <motion.div
+                      key={file.id}
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: ((activeView === 'files' ? visibleFolders.length : 0) + i) * 0.05 }}
+                      onContextMenu={(e) => handleContextMenu(e, file)}
+                      className={viewMode === 'grid'
+                        ? 'bg-white/5 border border-white/10 rounded-xl p-4 hover:bg-white/10 cursor-pointer transition-all group relative'
+                        : 'bg-white/5 border border-white/10 rounded-xl p-4 hover:bg-white/10 cursor-pointer transition-all flex items-center gap-4 relative'
+                      }
+                    >
+                      <button onClick={(e) => toggleStar(file.id, e)} className={`absolute ${viewMode === 'grid' ? 'top-3 right-3' : 'right-12 top-1/2 -translate-y-1/2'} z-10 p-1.5 rounded-md hover:bg-black/20 ${starredIds.includes(file.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
+                        <Star size={16} className={starredIds.includes(file.id) ? 'fill-yellow-400 text-yellow-400' : 'text-slate-400'} />
+                      </button>
+                      <div className={viewMode === 'grid' ? 'w-full aspect-square bg-white/5 rounded-lg flex items-center justify-center mb-3' : 'w-12 h-12 bg-white/5 rounded-lg flex items-center justify-center shrink-0'}>
+                        {getFileIcon(file.type, viewMode === 'grid' ? 32 : 24)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-white truncate text-sm">{file.name}</p>
+                        <p className="text-xs text-slate-500">{formatBytes(file.size)}</p>
+                      </div>
+                      {viewMode === 'list' && (
+                        <button onClick={(e) => { e.stopPropagation(); handleContextMenu(e, file); }} className="p-2 hover:bg-white/10 rounded-lg">
+                          <MoreVertical size={16} />
+                        </button>
+                      )}
+                    </motion.div>
+                  ))}
+                </div>
+              )}
 
-              {currentFolderFiles.map((file, i) => (
-                <motion.div
-                  key={file.id}
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: (folders.length + i) * 0.05 }}
-                  onContextMenu={(e) => handleContextMenu(e, file)}
-                  className={viewMode === 'grid'
-                    ? 'bg-white/5 border border-white/10 rounded-xl p-4 hover:bg-white/10 cursor-pointer transition-all group'
-                    : 'bg-white/5 border border-white/10 rounded-xl p-4 hover:bg-white/10 cursor-pointer transition-all flex items-center gap-4'
-                  }
-                >
-                  <div className={viewMode === 'grid' ? 'w-full aspect-square bg-white/5 rounded-lg flex items-center justify-center mb-3' : 'w-12 h-12 bg-white/5 rounded-lg flex items-center justify-center shrink-0'}>
-                    {getFileIcon(file.type, viewMode === 'grid' ? 32 : 24)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-white truncate text-sm">{file.name}</p>
-                    <p className="text-xs text-slate-500">{formatBytes(file.size)}</p>
-                  </div>
-                  {viewMode === 'list' && (
-                    <button onClick={(e) => { e.stopPropagation(); handleContextMenu(e, file); }} className="p-2 hover:bg-white/10 rounded-lg">
-                      <MoreVertical size={16} />
-                    </button>
+              {!loading && (activeView === 'files' ? visibleFolders.length : 0) === 0 && visibleFiles.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-64 text-center rounded-2xl border border-dashed border-white/15 bg-white/[0.02]">
+                  <Database size={64} className="text-slate-600 mb-4" />
+                  <h3 className="text-xl font-bold text-white mb-2">{activeView === 'starred' ? 'No starred files yet' : activeView === 'recent' ? 'No recent files yet' : 'No files yet'}</h3>
+                  <p className="text-slate-400 mb-6">{activeView === 'starred' ? 'Star files to pin important items here.' : activeView === 'recent' ? 'New uploads will appear here automatically.' : 'Upload your first file to get started.'}</p>
+                  {activeView === 'files' && (
+                    <label className="px-6 py-3 bg-sky-600 hover:bg-sky-700 rounded-xl font-semibold cursor-pointer transition-colors flex items-center gap-2">
+                      <Upload size={20} />
+                      Upload Files
+                      <input type="file" multiple onChange={handleUpload} className="hidden" />
+                    </label>
                   )}
-                </motion.div>
-              ))}
-            </div>
-          )}
-
-          {!loading && folders.length === 0 && currentFolderFiles.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-64 text-center">
-              <Database size={64} className="text-slate-600 mb-4" />
-              <h3 className="text-xl font-bold text-white mb-2">No files yet</h3>
-              <p className="text-slate-400 mb-6">Upload your first file to get started</p>
-              <label className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 rounded-xl font-semibold cursor-pointer transition-colors flex items-center gap-2">
-                <Upload size={20} />
-                Upload Files
-                <input type="file" multiple onChange={handleUpload} className="hidden" />
-              </label>
-            </div>
-          )}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -481,7 +570,7 @@ export default function Dashboard() {
 
 function NavItem({ icon, label, active, onClick, collapsed }) {
   return (
-    <button onClick={onClick} className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all group ${active ? 'bg-indigo-600 shadow-lg shadow-indigo-600/20' : 'hover:bg-white/5'}`}>
+    <button onClick={onClick} className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all group ${active ? 'bg-gradient-to-r from-sky-600 to-indigo-600 shadow-lg shadow-sky-900/30' : 'hover:bg-white/5'}`}>
       <div className={`${active ? 'text-white' : 'text-slate-400 group-hover:text-white transition-colors'}`}>{icon}</div>
       {!collapsed && <span className={`font-semibold text-sm ${active ? 'text-white' : 'text-slate-400 group-hover:text-white transition-colors'}`}>{label}</span>}
     </button>
@@ -497,11 +586,56 @@ function getFileIcon(type, size = 24) {
   return <File size={size} className="text-slate-400" />;
 }
 
+function ActivityFeedView({ files, onOpenActivity }) {
+  if (!files.length) {
+    return (
+      <div className="h-full min-h-[320px] rounded-3xl border border-dashed border-white/15 bg-white/[0.02] flex flex-col items-center justify-center text-center px-4">
+        <Activity size={56} className="text-slate-600 mb-4" />
+        <h2 className="text-2xl font-bold text-white mb-2">No activity yet</h2>
+        <p className="text-slate-400 max-w-md">Uploads and file access events will appear here once you start using the workspace.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-5xl">
+      <h1 className="text-3xl font-bold text-white mb-2">Activity Timeline</h1>
+      <p className="text-slate-400 mb-8">Latest file events across your workspace.</p>
+
+      <div className="space-y-3">
+        {files.map((file, index) => (
+          <motion.div
+            key={file.id}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: index * 0.03 }}
+            className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] p-4 lg:p-5"
+          >
+            <div className="absolute left-0 top-0 h-full w-1 bg-gradient-to-b from-sky-400 to-indigo-500" />
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pl-3">
+              <div>
+                <p className="font-semibold text-white">{file.name}</p>
+                <p className="text-xs text-slate-400 mt-1">Uploaded {new Date(file.created_at).toLocaleString()}</p>
+              </div>
+              <button
+                onClick={() => onOpenActivity?.(file)}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-sky-600/80 hover:bg-sky-600 text-white text-sm font-medium transition-colors"
+              >
+                <Clock size={14} />
+                View Activity
+              </button>
+            </div>
+          </motion.div>
+        ))}
+      </div>
+    </div>
+  );
+}
 function SettingsView({ user }) {
   return (
     <div className="max-w-4xl">
       <h1 className="text-3xl font-bold text-white mb-8">Settings</h1>
-      
+
       <div className="space-y-6">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white/5 border border-white/10 rounded-2xl p-6">
           <h2 className="text-xl font-bold text-white mb-4">Account Information</h2>
@@ -551,7 +685,7 @@ function TrustCenterView() {
   return (
     <div className="max-w-4xl">
       <h1 className="text-3xl font-bold text-white mb-8">Trust Center</h1>
-      
+
       <div className="space-y-6">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-yellow-600/10 border border-yellow-500/30 rounded-2xl p-6">
           <div className="flex items-center gap-4 mb-4">

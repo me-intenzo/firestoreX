@@ -19,16 +19,23 @@ export function AuthProvider({ children }) {
     });
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
+  const signOut = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
+    setUser(null);
+  };
+
   const value = {
     user,
-    loading
+    loading,
+    signOut
   };
 
   return (
@@ -37,3 +44,4 @@ export function AuthProvider({ children }) {
     </AuthContext.Provider>
   );
 }
+

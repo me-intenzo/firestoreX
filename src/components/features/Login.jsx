@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowRight, Loader2, AlertCircle, Sparkles, ArrowLeft } from 'lucide-react';
+import { ArrowRight, Loader2, Sparkles, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
 import ApiService from '../../services/api';
 import { supabase } from '../../config/supabase';
@@ -9,10 +9,10 @@ export default function Login({ onToggle, onBack }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
 
   const handleGoogleLogin = async () => {
     try {
+      setLoading(true);
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
@@ -22,13 +22,13 @@ export default function Login({ onToggle, onBack }) {
       if (error) throw error;
     } catch (err) {
       toast.error(err.message);
+      setLoading(false);
     }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setError(null);
 
     const { error } = await ApiService.signIn(email, password);
 
@@ -117,7 +117,8 @@ export default function Login({ onToggle, onBack }) {
           <div className="space-y-4">
             <button
               onClick={handleGoogleLogin}
-              className="w-full py-3 px-4 bg-white text-slate-900 rounded-xl font-semibold hover:bg-slate-100 transition-colors flex items-center justify-center gap-3 shadow-none hover:shadow-lg active:scale-[0.98]"
+              disabled={loading}
+              className="w-full py-3 px-4 bg-white text-slate-900 rounded-xl font-semibold hover:bg-slate-100 transition-colors flex items-center justify-center gap-3 shadow-none hover:shadow-lg active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <svg className="w-5 h-5" viewBox="0 0 24 24">
                 <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -136,13 +137,6 @@ export default function Login({ onToggle, onBack }) {
                 <span className="bg-[#0B0C15] px-2 text-slate-500">Or email</span>
               </div>
             </div>
-
-            {error && (
-              <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center gap-2 text-red-400 text-sm">
-                <AlertCircle size={16} />
-                {error}
-              </div>
-            )}
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
@@ -169,7 +163,7 @@ export default function Login({ onToggle, onBack }) {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full bg-[#151621] border border-[#25263a] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all placeholder:text-slate-600"
-                  placeholder="••••••••"
+                  placeholder="********"
                 />
               </div>
 
@@ -198,3 +192,4 @@ export default function Login({ onToggle, onBack }) {
     </div>
   );
 }
+

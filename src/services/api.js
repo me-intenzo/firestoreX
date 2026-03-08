@@ -32,7 +32,6 @@ class ApiService {
     return { error };
   }
 
-
   // File methods
   async uploadFile(bucket, path, file, options = {}) {
     const { encrypt = false, encryptionPassword = null } = options;
@@ -95,10 +94,10 @@ class ApiService {
       encryption_metadata: encryptionMetadata
     });
 
-    await SecurityService.logEvent('FILE_UPLOADED', { 
-      fileName: file.name, 
+    await SecurityService.logEvent('FILE_UPLOADED', {
+      fileName: file.name,
       path,
-      encrypted: encrypt 
+      encrypted: encrypt
     }, 'info');
     return { data, error };
   }
@@ -132,20 +131,37 @@ class ApiService {
 
   // Security & Sharing
   async updateFileSecurity(fileId, { access_level, password, allowed_users, share_expires_at, max_downloads }) {
-    const updates = { access_level };
-    
-    // Hash password if provided
-    if (password !== undefined && password) {
-      updates.password_hash = await SecurityService.hashPassword(password);
-    }
-    
-    if (allowed_users !== undefined) updates.allowed_users = allowed_users;
-    if (share_expires_at !== undefined) updates.share_expires_at = share_expires_at;
-    if (max_downloads !== undefined) updates.max_downloads = max_downloads;
+    const { data: existingFile, error: existingFileError } = await supabase
+      .from('files')
+      .select('share_token')
+      .eq('id', fileId)
+      .single();
 
-    // Generate share token if creating a share link
-    if (access_level === 'public' || access_level === 'password') {
-      updates.share_token = SecurityService.generateShareToken();
+    if (existingFileError) {
+      return { data: null, error: existingFileError };
+    }
+
+    const updates = { access_level };
+
+    // Allow explicitly setting or clearing password gate
+    if (password !== undefined) {
+      updates.password_hash = password ? await SecurityService.hashPassword(password) : null;
+    }
+
+    if (allowed_users !== undefined) updates.allowed_users = allowed_users;
+
+    const isShareEnabled = access_level !== 'private';
+
+    if (isShareEnabled) {
+      updates.share_token = existingFile?.share_token || SecurityService.generateShareToken();
+      updates.share_expires_at = share_expires_at ?? null;
+      updates.max_downloads = max_downloads ?? null;
+    } else {
+      // Private mode removes external sharing attributes
+      updates.share_token = null;
+      updates.share_expires_at = null;
+      updates.max_downloads = null;
+      updates.password_hash = null;
     }
 
     const { data, error } = await supabase
@@ -155,11 +171,11 @@ class ApiService {
       .select();
 
     if (!error) {
-      await SecurityService.logEvent('FILE_SHARE_UPDATED', { 
-        fileId, 
+      await SecurityService.logEvent('FILE_SHARE_UPDATED', {
+        fileId,
         access_level,
         hasPassword: !!password,
-        hasExpiration: !!share_expires_at
+        hasExpiration: !!share_expires_at,
       }, 'info');
     }
 
@@ -176,10 +192,10 @@ class ApiService {
     if (!file || !file.password_hash) return { valid: false };
 
     const valid = await SecurityService.verifyPassword(password, file.password_hash);
-    
-    await SecurityService.logEvent('FILE_PASSWORD_ATTEMPT', { 
-      fileId, 
-      success: valid 
+
+    await SecurityService.logEvent('FILE_PASSWORD_ATTEMPT', {
+      fileId,
+      success: valid
     }, valid ? 'info' : 'warning');
 
     return { valid };
@@ -196,19 +212,26 @@ class ApiService {
 
   async logFileAccess(fileId, action) {
     const { data: { user } } = await supabase.auth.getUser();
-    await supabase.from('activity_logs').insert({
-      user_id: user?.id || null, // Null for anonymous
-      action: 'FILE_ACCESS',
-      details: { fileId, action },
-      severity: 'info'
-    });
 
-    // Increment download/view count
-    if (action === 'download' || action === 'view') {
-      await supabase.rpc('increment_downloads', { file_id: fileId }); // We need to create this RPC or just update
-      // or just simple update:
-      // await supabase.from('files').update({ downloads: downloads + 1 })... (needs fetch first, unreliable)
-      // For now, rely on log count or create RPC later.
+    try {
+      if (user?.id) {
+        await supabase.from('activity_logs').insert({
+          user_id: user.id,
+          action: 'FILE_ACCESS',
+          details: { fileId, action },
+          severity: 'info'
+        });
+      }
+    } catch (error) {
+      console.warn('Failed to log file access activity:', error?.message || error);
+    }
+
+    if (action === 'download') {
+      try {
+        await supabase.rpc('increment_downloads', { file_id: fileId });
+      } catch (error) {
+        console.warn('Failed to increment download count:', error?.message || error);
+      }
     }
   }
 
@@ -222,6 +245,41 @@ class ApiService {
       .eq('details->>fileId', fileId)
       .order('created_at', { ascending: false });
     return { data, error };
+  }
+
+  async getSharedFileByToken(token) {
+    const { data, error } = await supabase
+      .from('files')
+      .select('id, name, size, type, storage_path, owner_id, access_level, password_hash, allowed_users, share_token, share_expires_at, max_downloads, downloads, created_at')
+      .eq('share_token', token)
+      .single();
+
+    return { data, error };
+  }
+
+  async getSharedDownload(storagePath) {
+    const bucket = supabase.storage.from('uploads');
+
+    const { data: signedData, error: signedError } = await bucket.createSignedUrl(storagePath, 120);
+    if (!signedError && signedData?.signedUrl) {
+      return { blob: null, url: signedData.signedUrl, error: null };
+    }
+
+    const { data: blob, error: downloadError } = await bucket.download(storagePath);
+    if (!downloadError && blob) {
+      return { blob, url: null, error: null };
+    }
+
+    const { data: publicData } = bucket.getPublicUrl(storagePath);
+    if (publicData?.publicUrl) {
+      return { blob: null, url: publicData.publicUrl, error: null };
+    }
+
+    return {
+      blob: null,
+      url: null,
+      error: signedError || downloadError || { message: 'Unable to download shared file. Check storage policies for shared access.' },
+    };
   }
 
   // Database methods
